@@ -1,0 +1,79 @@
+name: AxiomMegaDoc source bundle and v0.12 tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  megadoc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and extract v0.11 source bundle
+        run: |
+          mkdir -p /tmp/axiom-megadoc-source
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          root = Path('/tmp/axiom-megadoc-source')
+          with zipfile.ZipFile('axiom_megadoc_v0_11.zip') as arc:
+              for info in arc.infolist():
+                  target = (root / info.filename).resolve()
+                  assert target.is_relative_to(root.resolve()), info.filename
+                  assert info.file_size <= 16_000_000
+                  if not info.is_dir():
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(arc.read(info))
+                      print(info.filename, info.file_size)
+          PY
+      - name: Validate v0.12 generator
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 src/build_v012.py --output /tmp/axiom-megadoc-generated
+      - name: Upload generated corpus for BFS-NG benchmarks
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-megadoc-v012-generated
+          path: /tmp/axiom-megadoc-generated/
+          if-no-files-found: error
+      - name: Upload extracted original source for audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-megadoc-v011-source
+          path: /tmp/axiom-megadoc-source/
+          if-no-files-found: error
+
+  runtime-lanes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Scheme, ML, and Prolog runtimes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends guile-3.0 mlton swi-prolog-nox
+      - name: Generate and semantically verify three runtime traces
+        run: |
+          python3 src/build_v012.py --runtime-traces --output /tmp/axiom-megadoc-with-runtime
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("/tmp/axiom-megadoc-with-runtime")
+          data = json.loads((root / "manifest.json").read_text())
+          assert data["generated_docs"] == 20
+          assert data["runtime_traces_executed"]
+          assert sorted(data["constructions"]) == ["latent_diagnostic", "runtime_trace"]
+          assert sum(d["construction"] == "runtime_trace" for d in data["documents"]) == 3
+          assert all(data["runtime_versions"].get(name) for name in ("guile","mlton","swipl"))
+          print("Generated 3 verified runtime-trace megadocs")
+          PY
+      - name: Upload regenerated checked runtime documents
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-megadoc-v012-with-runtime
+          path: /tmp/axiom-megadoc-with-runtime/
+          if-no-files-found: error
