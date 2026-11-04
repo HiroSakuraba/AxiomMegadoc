@@ -222,10 +222,14 @@ def _execute_runtime_triplet(module, records: list[dict]):
             raise ValueError(f"source hash mismatch for runtime record {rid}")
         if record.get("validation", {}).get("static", {}).get("status") != "pass":
             raise ValueError(f"runtime record has no passing static check: {rid}")
+        version_args = [binary] if binary == "mlton" else [binary, "--version"]
         version = subprocess.run(
-            [binary, "--version"], capture_output=True, text=True, timeout=10,
+            version_args, capture_output=True, text=True, timeout=10,
             check=False)
-        versions[binary] = (version.stdout or version.stderr).splitlines()[0][:200]
+        details = (version.stdout or version.stderr).strip().splitlines()
+        if version.returncode != 0 or not details:
+            raise RuntimeError(f"unable to identify version of {binary}: {version.stderr[:200]}")
+        versions[binary] = details[0][:200]
         lane = getattr(module, runner_name)(record)
         if lane.get("status") != "pass":
             raise RuntimeError(f"runtime lane did not pass for {rid}: {lane}")
