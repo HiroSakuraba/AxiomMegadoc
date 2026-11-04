@@ -26,6 +26,13 @@ SUPPORTED = {
     "axiom_ml": "build_latent_diagnostic_ml",
     "axiom_prolog": "build_latent_diagnostic_prolog",
 }
+# The v0.11 templates explain LIST SUM and LIST APPEND. They are not
+# semantically correct for parity, length, membership, trees, or DCGs.
+PAPER_ALIGNED_FAMILIES = {
+    "axiom_scheme": {"functional/list/sum"},
+    "axiom_ml": {"typed/list/sum"},
+    "axiom_prolog": {"logic/list/append-det"},
+}
 MAX_SOURCE_BYTES = 16_000_000
 
 
@@ -141,6 +148,30 @@ def _validate_doc(module, md, valid: dict, invalid: dict) -> None:
         raise ValueError("empty generated document")
 
 
+def _view_text(valid: dict, invalid: dict) -> str:
+    """Benchmark-only paired source view: no generated rationale or checked label."""
+    label_codes = json.dumps(invalid["diagnostic_codes"], ensure_ascii=False, sort_keys=True)
+    observed = invalid.get("validation", {}).get("static", {})
+    observation = json.dumps(observed, sort_keys=True, ensure_ascii=False)
+    language = valid["language"]
+    return ("# Axiom corpus record pair — benchmark-only provenance view\n"
+            "This is NOT a paper-aligned latent diagnostic or a compiler-verified "
+            "training example. Labels are distinguished from checker observations.\n\n"
+            f"language: {language}\n"
+            f"split: {valid['split']}\n"
+            f"family: {valid.get('family', 'unspecified')}\n"
+            f"valid_record_id: {valid['record_id']}\n"
+            f"invalid_record_id: {invalid['record_id']}\n\n"
+            "## Canonical record labelled valid\n\n"
+            f"```{language}\n{valid['canonical_source']}\n```\n\n"
+            "## Canonical record labelled invalid\n\n"
+            f"```{language}\n{invalid['canonical_source']}\n```\n\n"
+            "## Label metadata (not inherently checked)\n\n"
+            f"recorded_diagnostic_codes: {label_codes}\n\n"
+            "## Recorded static checker result\n\n"
+            f"validation_static_json: {observation}\n")
+
+
 def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict:
     if max_docs is not None and max_docs < 1:
         raise ValueError("--max-docs must be positive")
@@ -163,6 +194,7 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
 
         skipped = Counter()
         corpus: list[tuple[object, dict, dict]] = []
+        views: list[tuple[dict, dict]] = []
         for group, members in sorted(by_group.items()):
             good = [r for r in members if r.get("is_valid") is True]
             bad = [r for r in members if r.get("is_valid") is False]
@@ -172,6 +204,19 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
             valid, invalid = good[0], bad[0]
             if valid.get("language") not in SUPPORTED:
                 skipped["unsupported_language"] += 1
+                continue
+            # Broader record-pair views are usable for filesystem benchmarks;
+            # they do not imply the annotated defect has been checker-proved.
+            if (valid.get("language") == invalid.get("language")
+                    and valid.get("split") == invalid.get("split")
+                    and valid.get("split_group_key") == invalid.get("split_group_key")
+                    and _checksum_matches(valid) and _checksum_matches(invalid)):
+                views.append((valid, invalid))
+            else:
+                skipped["view_invalid_provenance"] += 1
+                continue
+            if valid.get("family") not in PAPER_ALIGNED_FAMILIES[valid["language"]]:
+                skipped["rationale_not_semantically_applicable"] += 1
                 continue
             eligible, reason = _eligible_pair(valid, invalid)
             if not eligible:
@@ -197,7 +242,8 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
         attributes = output / "attributes"
         records_dir = output / "records"
         streams = output / "streams"
-        for directory in (docs, attributes, records_dir, streams):
+        views_dir = output / "benchmark-views"
+        for directory in (docs, attributes, records_dir, streams, views_dir):
             directory.mkdir()
 
         entries = []
@@ -255,6 +301,32 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
                     "language", "split", "construction", "record_ids",
                     "text_sha256", "trust")},
             })
+        benchmark_views = []
+        for valid, invalid in views:
+            # Also materialize all source record blobs, not just those that
+            # qualify for the stronger latent-rationale trust contract.
+            for record in (valid, invalid):
+                rid = record["record_id"]
+                if rid not in seen_record_ids:
+                    seen_record_ids.add(rid)
+                    (records_dir / (digest(rid.encode())[:24] + ".json")).write_bytes(
+                        stable_json(record))
+            identity = digest(valid["contrast_group_id"].encode("utf-8"))[:20]
+            rel = f"benchmark-views/{identity}.md"
+            view_bytes = _view_text(valid, invalid).encode("utf-8")
+            (output / rel).write_bytes(view_bytes)
+            benchmark_views.append({
+                "path": rel,
+                "text_sha256": digest(view_bytes),
+                "language": valid["language"],
+                "split": valid["split"],
+                "family": valid["family"],
+                "record_ids": [valid["record_id"], invalid["record_id"]],
+                "claimed_diagnostic_codes": invalid["diagnostic_codes"],
+                "observed_checker_status": invalid.get("validation", {}).get(
+                    "static", {}).get("status"),
+                "trust": "benchmark_only_unverified_labels",
+            })
         for split, documents in sorted(split_streams.items()):
             with (streams / (split + ".jsonl")).open("wb") as handle:
                 for item in documents:
@@ -267,15 +339,22 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
             "source_builder_sha256": builder_sha,
             "records_in_ledger": len(records),
             "generated_docs": len(entries),
+            "benchmark_views": len(benchmark_views),
             "selected_source_records": len(seen_record_ids),
             "split_counts": dict(sorted(Counter(e["split"] for e in entries).items())),
             "language_counts": dict(sorted(Counter(e["language"] for e in entries).items())),
             "skipped_groups": dict(sorted(skipped.items())),
             "constructions": ["latent_diagnostic"],
+            "paper_aligned_families": {
+                language: sorted(families)
+                for language, families in sorted(PAPER_ALIGNED_FAMILIES.items())
+            },
+            "benchmark_view_format": "non-training, source-pair provenance",
             "runtime_traces_executed": False,
             "no_invented_compiler_results": True,
             "approximate_word_count": sum(e["approximate_word_count"] for e in entries),
             "documents": entries,
+            "views": benchmark_views,
         }
         (output / "manifest.json").write_bytes(stable_json(manifest))
         return manifest
@@ -293,7 +372,7 @@ def main() -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     print(json.dumps({
-        k: v for k, v in report.items() if k != "documents"
+        k: v for k, v in report.items() if k not in ("documents", "views")
     }, indent=2, sort_keys=True))
     return 0
 
