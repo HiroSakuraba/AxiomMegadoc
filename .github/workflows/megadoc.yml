@@ -1,0 +1,38 @@
+name: AxiomMegaDoc source bundle and v0.12 tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  megadoc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and extract v0.11 source bundle
+        run: |
+          mkdir -p /tmp/axiom-megadoc-source
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          root = Path('/tmp/axiom-megadoc-source')
+          with zipfile.ZipFile('axiom_megadoc_v0_11.zip') as arc:
+              for info in arc.infolist():
+                  target = (root / info.filename).resolve()
+                  assert target.is_relative_to(root.resolve()), info.filename
+                  assert info.file_size <= 16_000_000
+                  if not info.is_dir():
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(arc.read(info))
+                      print(info.filename, info.file_size)
+          PY
+      - name: Upload extracted original source for audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-megadoc-v011-source
+          path: /tmp/axiom-megadoc-source/
+          if-no-files-found: error
