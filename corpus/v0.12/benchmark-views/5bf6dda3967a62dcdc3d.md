@@ -1,0 +1,32 @@
+# Axiom corpus record pair — benchmark-only provenance view
+This is NOT a paper-aligned latent diagnostic or a compiler-verified training example. Labels are distinguished from checker observations.
+
+language: axiom_prolog
+split: train
+family: logic/dcg/ab-star
+valid_record_id: axiom_prolog:prolog_dcg_ab:5:valid:none
+invalid_record_id: axiom_prolog:prolog_dcg_ab:5:invalid:wrong_token_pattern
+
+## Canonical record labelled valid
+
+```axiom_prolog
+%!pdcgab5(+S0,-S,-N).
+pdcgab5(S,S,0).
+pdcgab5([a,b|S0],S,N) :- pdcgab5(S0,S,N0), N is N0+1.
+```
+
+## Canonical record labelled invalid
+
+```axiom_prolog
+%!pdcgab5(+S0,-S,-N).
+pdcgab5(S,S,0).
+pdcgab5([a,b,b|S0],S,N) :- pdcgab5(S0,S,N0), N is N0+1.
+```
+
+## Label metadata (not inherently checked)
+
+recorded_diagnostic_codes: ["SEMANTIC_WRONG_PATTERN"]
+
+## Recorded static checker result
+
+validation_static_json: {"clause_count": 2, "diagnostics": ["NONGROUND_ARITHMETIC_RHS"], "mode_count": 1, "status": "fail"}

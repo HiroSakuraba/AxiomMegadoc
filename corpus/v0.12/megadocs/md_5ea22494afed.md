@@ -1,0 +1,44 @@
+<AXIOM_MEGADOC id="md_5ea22494afed" construction="latent_diagnostic" split="train" languages="prolog" corpus="v0.9D">
+
+<SEGMENT type="task" trust="explanatory" provenance="rationale_template">
+Append two lists using structural recursion on the first list. The predicate is pappend_det4.
+</SEGMENT>
+
+<SEGMENT type="source" trust="canonical" provenance="record" record_id="axiom_prolog:prolog_append_det:4:valid:none">
+```prolog
+%!pappend_det4(+Left,+Right,-Out).
+pappend_det4([],Right,Right).
+```
+</SEGMENT>
+
+<SEGMENT type="rationale" trust="explanatory" provenance="rationale_template" record_id="axiom_prolog:prolog_append_det:4:valid:none" template="prolog_difference_list_obligation_v01">
+The mode declaration %! pappend_det4(+Left,+Right,-Out). fixes which arguments must be ground on entry to pappend_det4. The base clause pattern pappend_det4([],Right,Right). handles the terminal case where the list-structured input has been fully consumed. The recursive clause pappend_det4([Head|Tail],Right,[Head|Out]) :- pappend_det4(Tail,Right,Out). matches one element off the head and recurses on the tail. With the cut excluded and occurs check enabled, this gives a unique proof tree per input.
+</SEGMENT>
+
+<SEGMENT type="source" trust="canonical" provenance="record" record_id="axiom_prolog:prolog_append_det:4:valid:none">
+```prolog
+pappend_det4([Head|Tail],Right,[Head|Out]) :- pappend_det4(Tail,Right,Out).
+```
+</SEGMENT>
+
+<SEGMENT type="expected_io" trust="extracted" provenance="extractor" record_id="axiom_prolog:prolog_append_det:4:valid:none">
+query: pappend_det4([a,b],[c],Out)
+expected_solutions_json: [{"Out":{"items":[{"type":"atom","value":"a"},{"type":"atom","value":"b"},{"type":"atom","value":"c"}],"type":"list"}}]
+</SEGMENT>
+
+<SEGMENT type="invalid_mutation" trust="canonical" provenance="record" record_id="axiom_prolog:prolog_append_det:4:invalid:missing_mode_declaration">
+```prolog
+pappend_det4([],Right,Right).
+pappend_det4([Head|Tail],Right,[Head|Out]) :- pappend_det4(Tail,Right,Out).
+```
+</SEGMENT>
+
+<SEGMENT type="diagnostic" trust="checked" provenance="record" record_id="axiom_prolog:prolog_append_det:4:invalid:missing_mode_declaration">
+MISSING_MODE_DECLARATION
+</SEGMENT>
+
+<SEGMENT type="repair" trust="explanatory" provenance="rationale_template" record_id="axiom_prolog:prolog_append_det:4:invalid:missing_mode_declaration">
+Restore the `%! name(+/-args)` line — the mode declaration is mandatory in AxiomProlog.
+</SEGMENT>
+
+</AXIOM_MEGADOC>
