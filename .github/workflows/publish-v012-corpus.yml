@@ -1,0 +1,63 @@
+name: Verify published AxiomMegaDoc v0.12 corpus
+
+on:
+  pull_request:
+    paths:
+      - "corpus/**"
+      - "src/build_v012.py"
+      - "axiom_megadoc_v0_11.zip"
+      - ".github/workflows/publish-v012-corpus.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "corpus/**"
+      - "src/build_v012.py"
+      - "axiom_megadoc_v0_11.zip"
+      - ".github/workflows/publish-v012-corpus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout committed dataset
+        uses: actions/checkout@v4
+      - name: Test generator
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Install actual Scheme, ML and Prolog runtimes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends guile-3.0 mlton swi-prolog-nox
+      - name: Regenerate from original v0.11 source bundle
+        run: python3 src/build_v012.py --runtime-traces --output "$RUNNER_TEMP/v012-regenerated"
+      - name: Verify every generated file against committed corpus
+        run: |
+          python3 - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          expected = Path("corpus/v0.12")
+          regenerated = Path(os.environ["RUNNER_TEMP"]) / "v012-regenerated"
+          files = lambda root: {
+              p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()
+          }
+          committed_files = files(expected)
+          regenerated_files = files(regenerated)
+          assert len(committed_files) == 824, len(committed_files)
+          assert committed_files.keys() == regenerated_files.keys(), {
+              "missing": sorted(regenerated_files.keys() - committed_files.keys()),
+              "unexpected": sorted(committed_files.keys() - regenerated_files.keys()),
+          }
+          assert all(not p.is_symlink() for root in (expected,regenerated)
+                     for p in root.rglob("*"))
+          for rel in sorted(committed_files):
+              actual = committed_files[rel].read_bytes()
+              desired = regenerated_files[rel].read_bytes()
+              assert actual == desired, f"regeneration mismatch: {rel}"
+          checksum = hashlib.sha256(committed_files["manifest.json"].read_bytes()).hexdigest()
+          assert checksum == "665aee08fd8188f1fb78430a062a0decef816a8b80c7d4cc731a630f049e3ce9"
+          print("PASS: exact byte-for-byte match of 824 files; manifest SHA256", checksum)
+          PY

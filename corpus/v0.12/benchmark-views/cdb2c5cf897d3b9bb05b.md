@@ -1,0 +1,36 @@
+# Axiom corpus record pair — benchmark-only provenance view
+This is NOT a paper-aligned latent diagnostic or a compiler-verified training example. Labels are distinguished from checker observations.
+
+language: axiom_ml
+split: dev
+family: typed/adt/exhaustive
+valid_record_id: axiom_ml:ml_tree_count:5:valid:none
+invalid_record_id: axiom_ml:ml_tree_count:5:invalid:semantic_expected_mismatch
+
+## Canonical record labelled valid
+
+```axiom_ml
+datatype tree=Empty | Node of int*tree*tree
+(* @effect: pure *)
+(* @recursive: structural *)
+fun mtreecount5 (tr:tree) : int =
+  case tr of Empty => 2 | Node(v,l,r) => 1+mtreecount5 l+mtreecount5 r
+```
+
+## Canonical record labelled invalid
+
+```axiom_ml
+datatype tree=Empty | Node of int*tree*tree
+(* @effect: pure *)
+(* @recursive: structural *)
+fun mtreecount5Bad (tr:tree) : int =
+  case tr of Empty => 2 | Node(v,l,r) => 1+mtreecount5Bad l+mtreecount5Bad r
+```
+
+## Label metadata (not inherently checked)
+
+recorded_diagnostic_codes: ["SEMANTIC_EXPECTED_OUTPUT_MISMATCH"]
+
+## Recorded static checker result
+
+validation_static_json: {"datatype_count": 1, "diagnostics": [], "function_count": 1, "status": "pass"}

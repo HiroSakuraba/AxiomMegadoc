@@ -6,6 +6,16 @@ This repository is the v0.11 milestone bundle. It contains the design document, 
 
 ---
 
+## Published, browseable v0.12 corpus
+
+The complete generated corpus is committed under [**`corpus/v0.12/`**](corpus/v0.12/) as 824 individual files: **20 verified megadocs** (17 checked latent diagnostics and three executed runtime traces), **260 benchmark-only provenance views**, **520 original source records**, attribute JSON files, train/dev/test JSONL streams, and a content-hashed manifest.
+
+See the [corpus provenance and trust guide](corpus/README.md). The 260 benchmark views **are not** validated training examples. The dataset is deliberately small and does not demonstrate an improvement in model pretraining.
+
+The [corpus verification workflow](.github/workflows/publish-v012-corpus.yml) regenerates the complete dataset from the original v0.11 archive and byte-compares the results against the committed files, preserving whitespace from canonical source segments.
+
+---
+
 ## v0.12 development: executable corpus and benchmark data
 
 The v0.11 milestone remains preserved in the committed ZIP. The new [v0.12 generator](src/build_v012.py) **runs directly on that ZIP**, requiring no manual path edits or external dependencies for its default mode:
