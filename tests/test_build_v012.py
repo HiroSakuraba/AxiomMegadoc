@@ -12,7 +12,9 @@ import zipfile
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
-from build_v012 import ARCHIVE, build, _eligible_pair, _checksum_matches
+from build_v012 import (
+    ARCHIVE, build, _eligible_pair, _checksum_matches, _runtime_matches_expected,
+)
 
 
 class MegaDocV012Tests(unittest.TestCase):
@@ -126,6 +128,23 @@ class MegaDocV012Tests(unittest.TestCase):
         self.assertTrue(_eligible_pair(valid, invalid)[0])
         invalid["split"] = "test"
         self.assertEqual(_eligible_pair(valid, invalid)[1], "cross_split_or_group")
+
+    def test_runtime_semantics_are_checked_not_just_exit_status(self):
+        int_record = {"expected_output": {"value": {"type": "int", "value": 12}}}
+        self.assertTrue(_runtime_matches_expected(int_record, "scheme", "12"))
+        self.assertFalse(_runtime_matches_expected(int_record, "scheme", "13"))
+        self.assertTrue(_runtime_matches_expected(int_record, "ml", "12"))
+        prolog = {"expected_output": {"solutions": [{"Out": {
+            "type": "list", "items": [
+                {"type": "atom", "value": "a"},
+                {"type": "atom", "value": "b"},
+            ]}}]}}
+        self.assertTrue(_runtime_matches_expected(prolog, "prolog",
+                                                  "1\nOut=[a,b]\n---"))
+        self.assertFalse(_runtime_matches_expected(prolog, "prolog",
+                                                   "1\nOut=[a,c]\n---"))
+        with self.assertRaisesRegex(ValueError, "full"):
+            build(ARCHIVE, self.base / "invalid-full", 2, runtime_traces=True)
 
     def test_externally_runnable_cli(self):
         output = self.base / "small"

@@ -35,3 +35,16 @@ CI builds the corpus from the pinned ZIP and uploads it as a workflow artifact. 
 1. Expand family-specific rationale templates **only after** semantic obligations are independently checked. The current strict whitelist prevents unrelated source families inheriting false task descriptions.
 2. Add a separately validated runtime-trace tranche which verifies runtime output against expected values and records runtime versions.
 3. Scale the underlying corpus using real validated generators, then run compute-matched atomic-vs-megadoc model experiments with external evaluation.
+
+## Optional live runtime-trace generation
+
+The original v0.11 `runtime_trace` construction is supported via an **opt-in, actually executed** mode:
+
+```sh
+sudo apt-get install guile-3.0 mlton swi-prolog-nox
+python3 src/build_v012.py --output /tmp/axiom-megadocs-v012-with-runtime --runtime-traces
+```
+
+This executes three representative canonical records (one each for Scheme, ML, and Prolog) through the original v0.11 harness and requires successful lane status **plus equality to the separately recorded expected semantic output** (integer values for Scheme/ML; the expected single atom-list solution for Prolog). Runtime versions appear in the manifest. It refuses missing runtimes or a semantic mismatch. Documents from this mode are tagged `executed-runtime-and-expected-matched`; they do not inherit the trust of the diagnostic rationale template. It is a limited verified baseline, **not a general runtime evaluator for all 520 records**.
+
+The non-runtime default remains standard-library-only and deterministic. The dedicated CI `runtime-lanes` job installs the Ubuntu 24.04 packaged runtimes and validates this opt-in construction without weakening the primary generator's correctness gates.

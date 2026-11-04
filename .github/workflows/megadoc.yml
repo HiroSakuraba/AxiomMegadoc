@@ -46,3 +46,34 @@ jobs:
           name: axiom-megadoc-v011-source
           path: /tmp/axiom-megadoc-source/
           if-no-files-found: error
+
+  runtime-lanes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Scheme, ML, and Prolog runtimes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends guile-3.0 mlton swi-prolog-nox
+      - name: Generate and semantically verify three runtime traces
+        run: |
+          python3 src/build_v012.py --runtime-traces --output /tmp/axiom-megadoc-with-runtime
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("/tmp/axiom-megadoc-with-runtime")
+          data = json.loads((root / "manifest.json").read_text())
+          assert data["generated_docs"] == 20
+          assert data["runtime_traces_executed"]
+          assert sorted(data["constructions"]) == ["latent_diagnostic", "runtime_trace"]
+          assert sum(d["construction"] == "runtime_trace" for d in data["documents"]) == 3
+          assert all(data["runtime_versions"].get(name) for name in ("guile","mlton","swipl"))
+          print("Generated 3 verified runtime-trace megadocs")
+          PY
+      - name: Upload regenerated checked runtime documents
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-megadoc-v012-with-runtime
+          path: /tmp/axiom-megadoc-with-runtime/
+          if-no-files-found: error
