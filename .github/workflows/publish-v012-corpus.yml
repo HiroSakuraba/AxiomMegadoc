@@ -1,0 +1,85 @@
+name: Publish verified AxiomMegaDoc v0.12 corpus
+
+on:
+  push:
+    branches: ["feature/publish-v012-corpus"]
+    paths:
+      - ".github/workflows/publish-v012-corpus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/feature/publish-v012-corpus'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout publication branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+      - name: Test corpus generator
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Install Scheme, ML, and Prolog runtimes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends guile-3.0 mlton swi-prolog-nox
+      - name: Generate exact verified v0.12 corpus
+        run: |
+          test ! -e corpus/v0.12
+          python3 src/build_v012.py --runtime-traces --output corpus/v0.12
+      - name: Verify hashes, provenance, split counts and files
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path("corpus/v0.12")
+          data = (root / "manifest.json").read_bytes()
+          sha = hashlib.sha256(data).hexdigest()
+          print("v0.12 manifest sha256:", sha)
+          assert sha == "665aee08fd8188f1fb78430a062a0decef816a8b80c7d4cc731a630f049e3ce9", sha
+          m = json.loads(data)
+          assert m["schema"] == "axiom-megadoc-v012-manifest-v1"
+          assert m["source_bundle_sha256"] == "c2eca398b99ce5f6cbc0806287432bcd32e1f47f9100b72c244882f69b1cd8dd"
+          assert (m["generated_docs"], m["benchmark_views"], m["selected_source_records"]) == (20, 260, 520)
+          assert m["split_counts"] == {"train": 17, "dev": 2, "test": 1}
+          assert m["runtime_traces_executed"] and m["no_invented_compiler_results"]
+          assert sum(x["construction"] == "runtime_trace" for x in m["documents"]) == 3
+          assert sum(x["construction"] == "latent_diagnostic" for x in m["documents"]) == 17
+          files = [p for p in root.rglob("*") if p.is_file()]
+          assert len(files) == 824, len(files)
+          assert all(not p.is_symlink() for p in root.rglob("*"))
+          for folder, pattern, count in [("megadocs","*.md",20),("benchmark-views","*.md",260),
+                                         ("attributes","*.json",20),("records","*.json",520),
+                                         ("streams","*.jsonl",3)]:
+              assert len(list((root / folder).glob(pattern))) == count, folder
+          for group in ("documents", "views"):
+              for entry in m[group]:
+                  path = root / entry["path"]
+                  assert path.is_file()
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  assert digest == entry["text_sha256"], entry["path"]
+                  if group == "views":
+                      assert entry["trust"] == "benchmark_only_unverified_labels"
+                  else:
+                      attr = json.loads((root / entry["attributes_path"]).read_text())
+                      assert attr["text_sha256"] == digest
+                      assert attr["split"] == entry["split"]
+                      assert attr["record_ids"] == entry["record_ids"]
+          print("Verified 824 versioned corpus files")
+          PY
+      - name: Commit all generated files to review branch
+        run: |
+          test "$GITHUB_REF" = "refs/heads/feature/publish-v012-corpus"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- corpus/v0.12
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No generated changes"; exit 0
+          fi
+          git commit -m "data: publish verified AxiomMegaDoc v0.12 corpus"
+          git push origin "HEAD:refs/heads/feature/publish-v012-corpus"
