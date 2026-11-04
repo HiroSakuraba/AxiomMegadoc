@@ -12,6 +12,8 @@ from collections import Counter, defaultdict
 import hashlib
 import importlib.util
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import shutil
 import sys
@@ -172,9 +174,85 @@ def _view_text(valid: dict, invalid: dict) -> str:
             f"validation_static_json: {observation}\n")
 
 
-def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict:
+
+RUNTIME_CASES = (
+    ("axiom_scheme:scheme_list_sum:9:valid:none", "scheme", "guile", "run_scheme"),
+    ("axiom_ml:ml_list_sum:0:valid:none", "ml", "mlton", "run_ml"),
+    ("axiom_prolog:prolog_append_det:0:valid:none", "prolog", "swipl", "run_prolog"),
+)
+
+
+def _runtime_matches_expected(record: dict, language: str, stdout: str) -> bool:
+    """Only the three v0.11 representative records and simple result types."""
+    expected = record.get("expected_output", {})
+    if language in ("scheme", "ml"):
+        value = expected.get("value", {})
+        return (isinstance(value, dict) and value.get("type") == "int"
+                and isinstance(value.get("value"), int)
+                and stdout.strip() == str(value["value"]))
+    if language == "prolog":
+        # v0.11's chosen example produces one Out=list(atom...) solution.
+        solutions = expected.get("solutions")
+        if not isinstance(solutions, list) or len(solutions) != 1:
+            return False
+        output = solutions[0].get("Out", {})
+        if output.get("type") != "list":
+            return False
+        items = output.get("items")
+        if not isinstance(items, list) or not all(
+                isinstance(item, dict) and item.get("type") == "atom"
+                and isinstance(item.get("value"), str)
+                for item in items):
+            return False
+        canonical = "[" + ",".join(item["value"] for item in items) + "]"
+        return stdout.strip().replace("\r\n", "\n") == (
+            "1\nOut=" + canonical + "\n---")
+    return False
+
+
+def _execute_runtime_triplet(module, records: list[dict]):
+    by_id = {r["record_id"]: r for r in records}
+    results = []
+    versions = {}
+    for rid, language, binary, runner_name in RUNTIME_CASES:
+        if not shutil.which(binary):
+            raise RuntimeError(f"requested runtime_trace but {binary} is unavailable")
+        record = by_id[rid]
+        if not _checksum_matches(record):
+            raise ValueError(f"source hash mismatch for runtime record {rid}")
+        if record.get("validation", {}).get("static", {}).get("status") != "pass":
+            raise ValueError(f"runtime record has no passing static check: {rid}")
+        version = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=10,
+            check=False)
+        versions[binary] = (version.stdout or version.stderr).splitlines()[0][:200]
+        lane = getattr(module, runner_name)(record)
+        if lane.get("status") != "pass":
+            raise RuntimeError(f"runtime lane did not pass for {rid}: {lane}")
+        if not _runtime_matches_expected(record, language, lane.get("stdout", "")):
+            raise ValueError(f"runtime output mismatched expected semantics for {rid}")
+        # Pass the verified lane value directly; don't execute source twice.
+        md = module.build_runtime_trace(record, language, lambda _r: lane)
+        rendered = module.render_megadoc(md)
+        parsed = module.parse_rendered(rendered)
+        if (not all(md.validation.values())
+                or len(parsed) != len(md.segments)
+                or any(p["content"] != s.content for p, s in zip(parsed, md.segments))
+                or any(s.content != record["canonical_source"] for s in md.segments
+                       if s.segment_type == "source")
+                or not any(s.segment_type == "runtime_result"
+                           and s.trust_level == "checked" for s in md.segments)):
+            raise ValueError(f"runtime document validation failed for {rid}")
+        results.append((md, record, None))
+    return results, versions
+
+
+def build(archive_path: Path, output: Path, max_docs: int | None = None,
+          runtime_traces: bool = False) -> dict:
     if max_docs is not None and max_docs < 1:
         raise ValueError("--max-docs must be positive")
+    if runtime_traces and max_docs is not None:
+        raise ValueError("runtime traces require a full, not --max-docs, build")
     if output.exists() and any(output.iterdir()):
         raise ValueError("output must be an empty directory; refusing to overwrite")
     if not archive_path.is_file():
@@ -236,6 +314,10 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
 
         if not corpus:
             raise ValueError("no checker-grounded megadocs could be constructed")
+        runtime_versions = {}
+        if runtime_traces:
+            live, runtime_versions = _execute_runtime_triplet(module, records)
+            corpus.extend(live)
 
         output.mkdir(parents=True, exist_ok=True)
         docs = output / "megadocs"
@@ -267,15 +349,19 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
                 "split": md.split,
                 "record_ids": md.record_ids,
                 "contrast_group_ids": md.contrast_group_ids,
-                "trust": "checker-observed-diagnostic",
+                "trust": ("checker-observed-diagnostic" if invalid is not None
+                          else "executed-runtime-and-expected-matched"),
                 "segment_count": len(md.segments),
-                "source_sha256": [r["canonical_source_hash"] for r in (valid, invalid)],
+                "source_sha256": [r["canonical_source_hash"]
+                                  for r in (valid, invalid) if r is not None],
                 "text_sha256": digest(text_bytes),
                 "approximate_word_count": md.token_estimate,
                 "validations": md.validation,
             }
             (output / attr_rel).write_bytes(stable_json(attr))
             for record in (valid, invalid):
+                if record is None:
+                    continue
                 rid = record["record_id"]
                 if rid not in seen_record_ids:
                     seen_record_ids.add(rid)
@@ -344,13 +430,15 @@ def build(archive_path: Path, output: Path, max_docs: int | None = None) -> dict
             "split_counts": dict(sorted(Counter(e["split"] for e in entries).items())),
             "language_counts": dict(sorted(Counter(e["language"] for e in entries).items())),
             "skipped_groups": dict(sorted(skipped.items())),
-            "constructions": ["latent_diagnostic"],
+            "constructions": (["latent_diagnostic", "runtime_trace"]
+                              if runtime_traces else ["latent_diagnostic"]),
             "paper_aligned_families": {
                 language: sorted(families)
                 for language, families in sorted(PAPER_ALIGNED_FAMILIES.items())
             },
             "benchmark_view_format": "non-training, source-pair provenance",
-            "runtime_traces_executed": False,
+            "runtime_traces_executed": runtime_traces,
+            "runtime_versions": runtime_versions,
             "no_invented_compiler_results": True,
             "approximate_word_count": sum(e["approximate_word_count"] for e in entries),
             "documents": entries,
@@ -365,10 +453,13 @@ def main() -> int:
     parser.add_argument("--source-zip", type=Path, default=ARCHIVE)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-docs", type=int)
+    parser.add_argument("--runtime-traces", action="store_true",
+                        help="run and validate one representative case per language; requires guile/mlton/swipl")
     args = parser.parse_args()
     try:
-        report = build(args.source_zip, args.output, args.max_docs)
-    except (ValueError, OSError, zipfile.BadZipFile) as error:
+        report = build(args.source_zip, args.output, args.max_docs, args.runtime_traces)
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError,
+            zipfile.BadZipFile) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     print(json.dumps({
