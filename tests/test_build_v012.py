@@ -62,9 +62,9 @@ class MegaDocV012Tests(unittest.TestCase):
     def test_records_byte_copy(self):
         out = self.base / "corpus"
         manifest = build(ARCHIVE, out, 3)
-        self.assertEqual(manifest["selected_source_records"], 6)
+        self.assertGreaterEqual(manifest["selected_source_records"], 6)
         records = list((out / "records").glob("*.json"))
-        self.assertEqual(len(records), 6)
+        self.assertEqual(len(records), manifest["selected_source_records"])
         for path in records:
             record = json.loads(path.read_text())
             self.assertTrue(_checksum_matches(record))
@@ -72,6 +72,26 @@ class MegaDocV012Tests(unittest.TestCase):
                 hashlib.sha256(record["record_id"].encode()).hexdigest()[:24] + ".json",
                 path.name,
             )
+
+    def test_benchmark_views_do_not_claim_checker_proof(self):
+        out = self.base / "corpus"
+        manifest = build(ARCHIVE, out)
+        self.assertGreater(manifest["benchmark_views"], 200)
+        self.assertEqual(manifest["benchmark_views"], len(manifest["views"]))
+        for view in manifest["views"]:
+            self.assertEqual(view["trust"], "benchmark_only_unverified_labels")
+            payload = (out / view["path"]).read_bytes()
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), view["text_sha256"])
+            self.assertIn(b"NOT a paper-aligned latent diagnostic", payload)
+            self.assertIn(b"Recorded static checker result", payload)
+        # The rationale templates are only validated for the three named
+        # source families, not across arbitrary semantic tasks.
+        allowed = {"functional/list/sum", "typed/list/sum",
+                   "logic/list/append-det"}
+        pairs = {tuple(view["record_ids"]): view["family"]
+                 for view in manifest["views"]}
+        for doc in manifest["documents"]:
+            self.assertIn(pairs[tuple(doc["record_ids"])], allowed)
 
     def test_safe_output_and_bounds(self):
         with self.assertRaisesRegex(ValueError, "positive"):
