@@ -30,6 +30,16 @@ jobs:
                       target.write_bytes(arc.read(info))
                       print(info.filename, info.file_size)
           PY
+      - name: Validate v0.12 generator
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 src/build_v012.py --output /tmp/axiom-megadoc-generated
+      - name: Upload generated corpus for BFS-NG benchmarks
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-megadoc-v012-generated
+          path: /tmp/axiom-megadoc-generated/
+          if-no-files-found: error
       - name: Upload extracted original source for audit
         uses: actions/upload-artifact@v4
         with:
