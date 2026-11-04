@@ -77,7 +77,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- corpus/v0.12
-          git diff --cached --check
+          # Canonical source excerpts intentionally contain trailing whitespace.
+          # Preserve original bytes; ignore only Git's trailing-space warning.
+          git -c core.whitespace=-trailing-space diff --cached --check
           if git diff --cached --quiet; then
             echo "No generated changes"; exit 0
           fi
