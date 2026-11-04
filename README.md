@@ -6,6 +6,23 @@ This repository is the v0.11 milestone bundle. It contains the design document, 
 
 ---
 
+## v0.12 development: executable corpus and benchmark data
+
+The v0.11 milestone remains preserved in the committed ZIP. The new [v0.12 generator](src/build_v012.py) **runs directly on that ZIP**, requiring no manual path edits or external dependencies for its default mode:
+
+```bash
+python3 src/build_v012.py --output /tmp/axiom-megadoc-v012
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+The conservative default currently produces **17 latent-diagnostic documents** only from source families matching the rationale templates (Scheme sum, ML sum, deterministic Prolog append), plus **260 explicitly nontraining source-pair provenance views** and all **520 original ledger records** as deterministic JSON file objects. It preserves the train/dev/test split, checks canonical hashes and recorded static diagnostics, and records reproducible output manifests/hashes. These counts refer to the checked-in v0.11 source bundle.
+
+The optional `--runtime-traces` mode (requires Guile, MLton, SWI-Prolog) **actually executes and independently checks three representative programs** against their ledger expected results. It produces 20 verified megadocs in total. CI tests both modes using pinned Ubuntu runtimes. No model training, scaling-law evidence, or external evaluation is asserted.
+
+See [v0.12 generation contract](docs/GENERATION_V012.md) for artifacts, trust boundaries, and limitations. [BFS-NG's AxiomMegaDoc benchmark integration](https://github.com/HiroSakuraba/bfs-ng/pull/4) consumes the generated artifacts to test long-document assembly, provenance lookups and repeated training reads. It does **not** measure physical filesystem cache misses.
+
+---
+
 ## What this is
 
 A megadoc is a single long training document built deterministically from one or more already-validated Axiom records. Megadocs are not new content — they are reorganized views of canonical sources, expected outputs, and verified lane results, with explanatory text inserted in clearly-tagged segments.
